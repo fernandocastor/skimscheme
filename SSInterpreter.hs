@@ -100,10 +100,10 @@ apply st func args =
                             otherwise -> return (Error "not a function.")
                         )
  
--- The lambda function is an auxiliary function to apply. It is responsible for
+-- The lambda function is an auxiliary function responsible for
 -- applying user-defined functions, instead of native ones. We use a very stupid 
 -- kind of dynamic variable (parameter) scoping that does not even support
--- recursion. This has to be fixed.
+-- recursion. This has to be fixed in the project.
 lambda :: StateT -> [LispVal] -> LispVal -> [LispVal] -> StateTransformer LispVal
 lambda st formals body args = 
   let dynEnv = foldr (\(Atom f, a) m -> Map.insert f a m) st (zip formals args)
