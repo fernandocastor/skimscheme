@@ -106,14 +106,15 @@ apply st func args =
 -- recursion. This has to be fixed in the project.
 lambda :: StateT -> [LispVal] -> LispVal -> [LispVal] -> StateTransformer LispVal
 lambda st formals body args = 
-  let dynEnv = foldr (\(Atom f, a) m -> Map.insert f a m) st (zip formals args)
+  let dynEnv = Prelude.foldr (\(Atom f, a) m -> Map.insert f a m) st (zip formals args)
   in  eval dynEnv body
 
 
--- Initial state of the programs. Maps identifiers to function 
--- definitions only. State stores general identifier -> value mappings. 
--- The initial identifier includes all the functions that are 
--- initially available for programmers.
+-- Initial state of the programs. Maps identifiers to vaues. 
+-- Initially, maps function names to function values, but there's 
+-- nothing stopping it from storing general values (e.g., well-known
+-- constants, such as pi). The initial state includes all the functions 
+-- that are available for programmers.
 state :: Map String LispVal
 state =   
             insert "number?"        (Native predNumber)
