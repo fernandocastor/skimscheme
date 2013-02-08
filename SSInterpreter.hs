@@ -124,7 +124,15 @@ state =
           $ insert "*"              (Native numericMult) 
           $ insert "-"              (Native numericSub) 
           $ insert "car"            (Native car)           
-          $ insert "cdr"            (Native cdr)           
+          $ insert "cdr"            (Native cdr)
+          $ insert "<"              (Native lessThan)
+          $ insert ">"              (Native biggerThan)
+          $ insert "<="             (Native lessOrEqual)
+          $ insert ">="             (Native biggerOrEqual)
+          $ insert "="              (Native equal)
+          $ insert "and"            (Native andOp)
+          $ insert "or"             (Native orOp)
+          $ insert "not"            (Native notOp)
             empty
 
 type StateT = Map String LispVal
@@ -205,11 +213,53 @@ numericBinOp op args = if onlyNumbers args
 onlyNumbers :: [LispVal] -> Bool
 onlyNumbers [] = True
 onlyNumbers (Number n:ns) = onlyNumbers ns
-onlyNumbers ns = False             
+onlyNumbers ns = False   
+
+onlyBools :: [LispVal] -> Bool
+onlyBools [] = True
+onlyBools (Bool n:ns) = onlyBools ns
+onlyBools ns = False           
                        
 unpackNum :: LispVal -> Integer
 unpackNum (Number n) = n
 --- unpackNum a = ... -- Should never happen!!!!
+
+unpackBool :: LispVal -> Bool
+unpackBool (Bool n) = n
+
+lessThan :: [LispVal]  -> LispVal
+lessThan ((Number a):(Number b):[]) = Bool ((<) a b)
+lessThan ls = Error "wrong number of arguments."
+
+biggerThan :: [LispVal]  -> LispVal
+biggerThan ((Number a):(Number b):[]) = Bool ((>) a b)
+biggerThan ls = Error "wrong number of arguments."
+
+lessOrEqual :: [LispVal]  -> LispVal
+lessOrEqual ((Number a):(Number b):[]) = Bool ((<=) a b)
+lessOrEqual ls = Error "wrong number of arguments."
+
+biggerOrEqual :: [LispVal]  -> LispVal
+biggerOrEqual ((Number a):(Number b):[]) = Bool ((>=) a b)
+biggerOrEqual ls = Error "wrong number of arguments."
+
+equal :: [LispVal]  -> LispVal
+equal ((Number a):(Number b):[]) = Bool ((==) a b)
+equal ls = Error "wrong number of arguments."
+
+andOp :: [LispVal] -> LispVal
+andOp list = if onlyBools list
+             then Bool (and (Prelude.map unpackBool list))
+             else Error "not a boolean."
+
+orOp :: [LispVal] -> LispVal
+orOp list = if onlyBools list
+             then Bool (or (Prelude.map unpackBool list))
+             else Error "not a boolean."
+
+notOp :: [LispVal] -> LispVal
+notOp ((Bool a):[]) = Bool (not a)
+notOp ls = Error "wrong number of arguments."
 
 -----------------------------------------------------------
 --                     main FUNCTION                     --
