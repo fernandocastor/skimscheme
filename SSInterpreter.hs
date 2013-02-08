@@ -222,6 +222,7 @@ getResult :: StateTransformer LispVal -> (LispVal, StateT)
 getResult (ST f) = f state
 
 main :: IO ()
-main = do args <- getArgs
-          putStr $ showResult $ getResult $ eval state $ readExpr $ concat $ args
+main = do args <- getLine
+          putStr $ showResult $ getResult $ eval state $ readExpr $ args
+          main
           
