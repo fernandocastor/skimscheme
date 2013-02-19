@@ -129,9 +129,12 @@ state =
             insert "number?"        (Native predNumber)
           $ insert "boolean?"       (Native predBoolean)
           $ insert "list?"          (Native predList)
+          $ insert "eqv?"           (Native equivalence)
           $ insert "+"              (Native numericSum) 
           $ insert "*"              (Native numericMult) 
-          $ insert "-"              (Native numericSub) 
+          $ insert "-"              (Native numericSub)
+          $ insert "/"              (Native integerDiv)
+          $ insert "mod"            (Native numericMod)
           $ insert "car"            (Native car)           
           $ insert "cdr"            (Native cdr)
           $ insert "<"              (NativeComp lessThan)
@@ -167,7 +170,7 @@ instance Monad StateTransformer where
 
 -- Includes some auxiliary functions. Does not include functions that modify
 -- state. These functions, such as define and set!, must run within the
--- StateTransformer monad. 
+-- StateTransformer monad.
 
 car :: [LispVal] -> LispVal
 car [List (a:as)] = a
@@ -211,8 +214,37 @@ numericSub [x] = if onlyNumbers [x]
                  else Error "not a number."
 numericSub l = numericBinOp (-) l
 
+integerDiv :: [LispVal] -> LispVal
+integerDiv [] = Error "wrong number of arguments." 
+integerDiv (Number n:[]) = Error "wrong number of arguments."
+integerDiv (Number n:Number m:[]) = Number (div n m)
+integerDiv (Number n:Number m:l) = Error "wrong number of arguments."
+
+numericMod :: [LispVal] -> LispVal
+numericMod [] = Error "wrong number of arguments."
+numericMod (Number n:[]) = Error "wrong number of arguments."
+numericMod (Number n:Number m:[]) = Number (mod n m)
+numericMod (Number n:Number m:l) = Error "wrong number of arguments."
+
 -- We have not implemented division. Also, notice that we have not 
 -- addressed floating-point numbers.
+
+igual :: LispVal -> LispVal -> Bool
+igual (Number n) (Number m) = n == m
+igual (Bool n) (Bool m) = n == m
+igual (String n) (String m) = n == m
+igual (List []) (List []) = True
+--igual (List n) (List m) = 
+
+instance Eq LispVal where
+   (==) n m = igual n m
+
+equivalence :: [LispVal] -> LispVal
+equivalence [] = Error "wrong number of arguments."
+equivalence (n:[]) = Error "wrong number of arguments."
+equivalence (n:m:[]) = Bool (n == m)
+equivalence (n:m:l) = Error "wrong number of arguments."
+
 
 numericBinOp :: (Integer -> Integer -> Integer) -> [LispVal] -> LispVal
 numericBinOp op args = if onlyNumbers args 
