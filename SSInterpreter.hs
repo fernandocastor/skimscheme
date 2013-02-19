@@ -55,7 +55,6 @@ eval st lam@(List (Atom "lambda":(List formals):body:[])) = return lam
 -- the same semantics as redefining other functions, since define is not
 -- stored as a regular function because of its return type.
 eval st (List (Atom "define": args)) = maybe (define st args) (\v -> return v) (Map.lookup "define" state)
-eval st ifThen@(List (Atom"if":predicate:body1:body2:[])) = apply st "if" [ifThen]
 eval st (List (Atom func : args)) = mapM (eval st) args >>= apply st func 
 eval st (Error s)  = return (Error s)
 eval st form = return (Error ("Could not eval the special form: " ++ (show form)))
@@ -99,7 +98,6 @@ apply st func args =
                         (stateLookup st func >>= \res -> 
                           case res of 
                             List (Atom "lambda" : List formals : body:l) -> lambda st formals body args 
-                            List (Atom "if" : predicate : body1 : body2 : l) -> ifThenElse st predicate body1 body2                               
                             otherwise -> return (Error "not a function.")
                         )
  
@@ -112,12 +110,6 @@ lambda st formals body args =
   let dynEnv = Prelude.foldr (\(Atom f, a) m -> Map.insert f a m) st (zip formals args)
   in  eval dynEnv body
 
-
-ifThenElse :: StateT -> LispVal -> LispVal -> LispVal -> StateTransformer LispVal
-ifThenElse st predicate body1 body2 = 
-  let (ST f) = eval st predicate
-      (result, newState) = f st
-  in if (unpackBool result) then (eval st body1) else (eval st body2)
 
 -- Initial state of the programs. Maps identifiers to vaues. 
 -- Initially, maps function names to function values, but there's 
@@ -142,6 +134,9 @@ state =
           $ insert "and"            (NativeComp andOp)
           $ insert "or"             (NativeComp orOp)
           $ insert "not"            (NativeComp notOp)
+          $ insert "if"             (Native ifThenElse)
+          $ insert "cons"           (Native concatenation)
+          $ insert "length"         (Native lengthList)
             empty
 
 type StateT = Map String LispVal
@@ -269,6 +264,18 @@ orOp list = if onlyBools list
 notOp :: [LispVal] -> LispVal
 notOp ((Bool a):[]) = Bool (not a)
 notOp ls = Error "wrong number of arguments."
+
+ifThenElse :: [LispVal] -> LispVal
+ifThenElse ((Bool predicate):body1:body2:_) = if predicate then body1 else body2
+ifThenElse l = Error "wrong number of arguments."
+
+concatenation :: [LispVal] -> LispVal
+concatenation (element: (List l):_) = List (element:l)
+concatenation l = Error "wrong number of arguments."
+
+lengthList :: [LispVal] -> LispVal
+lengthList ((List l):_) = Number (toInteger (length l))
+lengthList ls = Error "wrong number of arguments."
 
 -----------------------------------------------------------
 --                     main FUNCTION                     --
