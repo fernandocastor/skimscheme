@@ -276,8 +276,7 @@ igual :: LispVal -> LispVal -> Bool
 igual (Number n) (Number m) = n == m
 igual (Bool n) (Bool m) = n == m
 igual (String n) (String m) = n == m
-igual (List []) (List []) = True
---igual (List n) (List m) = 
+igual (List n) (List m) = n == m
 
 instance Eq LispVal where
    (==) n m = igual n m
