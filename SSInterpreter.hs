@@ -55,6 +55,7 @@ eval st lam@(List (Atom "lambda":(List formals):body:[])) = return lam
 -- the same semantics as redefining other functions, since define is not
 -- stored as a regular function because of its return type.
 eval st (List (Atom "define": args)) = maybe (define st args) (\v -> return v) (Map.lookup "define" state)
+eval st (List (Atom "set!": args)) = maybe (setVar st args) (\v -> return v) (Map.lookup "set!" state)
 eval st (List (Atom func : args)) = mapM (eval st) args >>= apply st func 
 eval st (Error s)  = return (Error s)
 eval st form = return (Error ("Could not eval the special form: " ++ (show form)))
@@ -82,6 +83,18 @@ defineVar env id val =
   ST (\s -> let (ST f)    = eval env val
                 (result, newState) = f s
             in (result, (insert id result newState))
+     )
+
+--SET
+setVar :: StateT -> [LispVal] -> StateTransformer LispVal
+setVar st [(Atom id), val] = setVarAux st id val
+setVar st [(List [Atom id]), val] = setVarAux st id val
+-- define st [(List l), val]                                       
+setVar st args = return (Error "wrong number of arguments")
+setVarAux env id val = 
+  ST (\s -> let (ST f)    = eval env val
+                (result, newState) = f s
+            in (result, (update id result newState))
      )
 
 
@@ -209,38 +222,6 @@ numericSub [x] = if onlyNumbers [x]
                  else Error "not a number."
 numericSub l = numericBinOp (-) l
 
-integerDiv :: [LispVal] -> LispVal
-integerDiv [] = Error "wrong number of arguments." 
-integerDiv (Number n:[]) = Error "wrong number of arguments."
-integerDiv (Number n:Number m:[]) = Number (div n m)
-integerDiv (Number n:Number m:l) = Error "wrong number of arguments."
-
-numericMod :: [LispVal] -> LispVal
-numericMod [] = Error "wrong number of arguments."
-numericMod (Number n:[]) = Error "wrong number of arguments."
-numericMod (Number n:Number m:[]) = Number (mod n m)
-numericMod (Number n:Number m:l) = Error "wrong number of arguments."
-
--- We have not implemented division. Also, notice that we have not 
--- addressed floating-point numbers.
-
-igual :: LispVal -> LispVal -> Bool
-igual (Number n) (Number m) = n == m
-igual (Bool n) (Bool m) = n == m
-igual (String n) (String m) = n == m
-igual (List []) (List []) = True
---igual (List n) (List m) = 
-
-instance Eq LispVal where
-   (==) n m = igual n m
-
-equivalence :: [LispVal] -> LispVal
-equivalence [] = Error "wrong number of arguments."
-equivalence (n:[]) = Error "wrong number of arguments."
-equivalence (n:m:[]) = Bool (n == m)
-equivalence (n:m:l) = Error "wrong number of arguments."
-
-
 numericBinOp :: (Integer -> Integer -> Integer) -> [LispVal] -> LispVal
 numericBinOp op args = if onlyNumbers args 
                        then Number $ foldl1 op $ Prelude.map unpackNum args 
@@ -263,47 +244,118 @@ unpackNum (Number n) = n
 unpackBool :: LispVal -> Bool
 unpackBool (Bool n) = n
 
+---------------------------------------------------
+--DIVISÃO INTEIRA
+
+integerDiv :: [LispVal] -> LispVal
+integerDiv [] = Error "wrong number of arguments." 
+integerDiv (Number n:[]) = Error "wrong number of arguments."
+integerDiv (Number n:Number m:[]) = Number (div n m)
+integerDiv (Number n:Number m:l) = Error "wrong number of arguments."
+
+---------------------------------------------------
+--MÓDULO
+
+numericMod :: [LispVal] -> LispVal
+numericMod [] = Error "wrong number of arguments."
+numericMod (Number n:[]) = Error "wrong number of arguments."
+numericMod (Number n:Number m:[]) = Number (mod n m)
+numericMod (Number n:Number m:l) = Error "wrong number of arguments."
+
+-- We have not implemented division. Also, notice that we have not 
+-- addressed floating-point numbers.
+
+---------------------------------------------------
+--EQV?
+
+igual :: LispVal -> LispVal -> Bool
+igual (Number n) (Number m) = n == m
+igual (Bool n) (Bool m) = n == m
+igual (String n) (String m) = n == m
+igual (List []) (List []) = True
+--igual (List n) (List m) = 
+
+instance Eq LispVal where
+   (==) n m = igual n m
+
+equivalence :: [LispVal] -> LispVal
+equivalence [] = Error "wrong number of arguments."
+equivalence (n:[]) = Error "wrong number of arguments."
+equivalence (n:m:[]) = Bool (n == m)
+equivalence (n:m:l) = Error "wrong number of arguments."
+
+---------------------------------------------------
+--MENOR QUE
+
 lessThan :: [LispVal]  -> LispVal
 lessThan ((Number a):(Number b):[]) = Bool ((<) a b)
 lessThan ls = Error "wrong number of arguments."
+
+---------------------------------------------------
+--MAIOR QUE
 
 biggerThan :: [LispVal]  -> LispVal
 biggerThan ((Number a):(Number b):[]) = Bool ((>) a b)
 biggerThan ls = Error "wrong number of arguments."
 
+---------------------------------------------------
+--MENOR OU IGUAL
+
 lessOrEqual :: [LispVal]  -> LispVal
 lessOrEqual ((Number a):(Number b):[]) = Bool ((<=) a b)
 lessOrEqual ls = Error "wrong number of arguments."
 
+---------------------------------------------------
+--MAIOR OU IGUAL
 biggerOrEqual :: [LispVal]  -> LispVal
 biggerOrEqual ((Number a):(Number b):[]) = Bool ((>=) a b)
 biggerOrEqual ls = Error "wrong number of arguments."
 
+---------------------------------------------------
+--IGUAL
 equal :: [LispVal]  -> LispVal
 equal ((Number a):(Number b):[]) = Bool ((==) a b)
 equal ls = Error "wrong number of arguments."
+
+---------------------------------------------------
+--AND
 
 andOp :: [LispVal] -> LispVal
 andOp list = if onlyBools list
              then Bool (and (Prelude.map unpackBool list))
              else Error "not a boolean."
 
+---------------------------------------------------
+--OR
+
 orOp :: [LispVal] -> LispVal
 orOp list = if onlyBools list
              then Bool (or (Prelude.map unpackBool list))
              else Error "not a boolean."
 
+---------------------------------------------------
+--NOT
+
 notOp :: [LispVal] -> LispVal
 notOp ((Bool a):[]) = Bool (not a)
 notOp ls = Error "wrong number of arguments."
+
+---------------------------------------------------
+--IF THEN ELSE
 
 ifThenElse :: [LispVal] -> LispVal
 ifThenElse ((Bool predicate):body1:body2:_) = if predicate then body1 else body2
 ifThenElse l = Error "wrong number of arguments."
 
+---------------------------------------------------
+--CONS
+
 concatenation :: [LispVal] -> LispVal
 concatenation (element: (List l):_) = List (element:l)
 concatenation l = Error "wrong number of arguments."
+
+---------------------------------------------------
+--LENGTH
 
 lengthList :: [LispVal] -> LispVal
 lengthList ((List l):_) = Number (toInteger (length l))
