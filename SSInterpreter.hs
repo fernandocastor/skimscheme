@@ -54,7 +54,7 @@ eval st lam@(List (Atom "lambda":(List formals):body:[])) = return lam
 -- for doing so. The problem is that redefining define does not have
 -- the same semantics as redefining other functions, since define is not
 -- stored as a regular function because of its return type.
-eval st (List (Atom "define": args)) = maybe (define st args) (\v -> return v) (Map.lookup "define" state)
+eval st (List (Atom "define": args)) = define st args
 eval st (List (Atom "set!": args)) = maybe (setVar st args) (\v -> return v) (Map.lookup "set!" state)
 eval st (List (Atom func : args)) = mapM (eval st) args >>= apply st func 
 eval st (Error s)  = return (Error s)
@@ -77,24 +77,28 @@ stateLookup st var = ST $
 define :: StateT -> [LispVal] -> StateTransformer LispVal
 define st [(Atom id), val] = defineVar st id val
 define st [(List [Atom id]), val] = defineVar st id val
--- define st [(List l), val]                                       
 define st args = return (Error "wrong number of arguments")
+
+defineVar :: StateT -> String -> LispVal -> StateTransformer LispVal
 defineVar env id val = 
   ST (\s -> let (ST f)    = eval env val
                 (result, newState) = f s
             in (result, (insert id result newState))
      )
 
---SET
+---------------------------------------------------
+--SET!
+
 setVar :: StateT -> [LispVal] -> StateTransformer LispVal
 setVar st [(Atom id), val] = setVarAux st id val
 setVar st [(List [Atom id]), val] = setVarAux st id val
--- define st [(List l), val]                                       
 setVar st args = return (Error "wrong number of arguments")
+
+setVarAux :: StateT -> String -> LispVal -> StateTransformer LispVal
 setVarAux env id val = 
   ST (\s -> let (ST f)    = eval env val
                 (result, newState) = f s
-            in (result, (update id result newState))
+            in (result, (insert id result newState))
      )
 
 
@@ -371,8 +375,24 @@ showResult (val, defs) = show val ++ "\n" ++ show (toList defs)
 getResult :: StateTransformer LispVal -> (LispVal, StateT)
 getResult (ST f) = f state
 
+---------------------------------------------------
+--COMMENTS
+
+clean :: LispVal -> LispVal
+clean (List a) = (List (cleanAux a))
+clean n = n
+
+cleanAux :: [LispVal] -> [LispVal]
+cleanAux [] = []
+cleanAux ((Atom f):args:ls) | f == "--" = (cleanAux ls)
+                            | otherwise = ((Atom f):(clean args):(cleanAux ls))
+cleanAux ((List args):ls) = ((clean (List args)):(cleanAux ls))
+cleanAux (n:ls) = (n:(cleanAux ls))
+
+
 main :: IO ()
 main = do args <- getLine
-          putStr $ showResult $ getResult $ eval state $ readExpr $ args
+          putStr $ showResult $ getResult $ eval state $ clean $ readExpr $ args
           main
           
+
