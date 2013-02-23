@@ -388,10 +388,12 @@ cleanAux ((Atom f):args:ls) | f == "--" = (cleanAux ls)
 cleanAux ((List args):ls) = ((clean (List args)):(cleanAux ls))
 cleanAux (n:ls) = (n:(cleanAux ls))
 
+trim::String->String
+trim = Prelude.filter (\x->(not (x `elem` "\r\t\n")))
 
 main :: IO ()
-main = do args <- getLine
-          putStr $ showResult $ getResult $ eval state $ clean $ readExpr $ args
-          main
+main = do args <- getArgs
+          sourceCode <- (readFile (head args))
+          putStr $ showResult $ getResult $ eval state $ clean $ readExpr $ trim sourceCode
           
 
