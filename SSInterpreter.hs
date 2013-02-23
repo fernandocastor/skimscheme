@@ -54,7 +54,7 @@ eval st lam@(List (Atom "lambda":(List formals):body:[])) = return lam
 -- for doing so. The problem is that redefining define does not have
 -- the same semantics as redefining other functions, since define is not
 -- stored as a regular function because of its return type.
-eval st (List (Atom "define": args)) = define st args
+eval st (List (Atom "define": args)) = maybe (define st args) (\v -> return v) (Map.lookup "define" state)
 eval st (List (Atom "set!": args)) = maybe (setVar st args) (\v -> return v) (Map.lookup "set!" state)
 eval st (List (Atom func : args)) = mapM (eval st) args >>= apply st func 
 eval st (Error s)  = return (Error s)
@@ -220,7 +220,6 @@ numericMult l = numericBinOp (*) l
 
 numericSub :: [LispVal] -> LispVal
 numericSub [] = Error "wrong number of arguments."
--- The following case handles negative number literals.
 numericSub [x] = if onlyNumbers [x]
                  then (\num -> (Number (- num))) (unpackNum x)
                  else Error "not a number."
