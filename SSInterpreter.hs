@@ -54,7 +54,7 @@ eval st lam@(List (Atom "lambda":(List formals):body:[])) = return lam
 -- for doing so. The problem is that redefining define does not have
 -- the same semantics as redefining other functions, since define is not
 -- stored as a regular function because of its return type.
-eval st (List (Atom "define": args)) = define st args
+eval st (List (Atom "define": args)) = maybe (define st args) (\v -> return v) (Map.lookup "define" state)
 eval st (List (Atom "set!": args)) = maybe (setVar st args) (\v -> return v) (Map.lookup "set!" state)
 eval st (List (Atom func : args)) = mapM (eval st) args >>= apply st func 
 eval st (Error s)  = return (Error s)
@@ -277,6 +277,7 @@ igual (Number n) (Number m) = n == m
 igual (Bool n) (Bool m) = n == m
 igual (String n) (String m) = n == m
 igual (List n) (List m) = n == m
+igual (DottedList l n) (DottedList k m) = ((l == k) && (n == m))
 
 instance Eq LispVal where
    (==) n m = igual n m
