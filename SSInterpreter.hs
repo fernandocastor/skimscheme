@@ -48,14 +48,11 @@ eval st (List [Atom "quote", val]) = return val
 eval st (List (Atom "begin":[v])) = eval st v
 eval st (List (Atom "begin": l: ls)) = eval st l >> eval st (List (Atom "begin": ls))
 eval st (List (Atom "begin":[])) = return (List [])
-
-
-
 eval st lam@(List (Atom "lambda":(List formals):body:[])) = return lam
-eval st ourLet@(List (Atom "let":(List bindings):body:[])) = ST (\s -> 
+eval st ourLet@(List (Atom "let":(List bindings):body:[])) = ST (\s a -> 
 																	let	(ST m) = let' st bindings body
-																		(result, newS) = m s
-																	in (result,s))
+																		(result, newS, newA) = m s a
+																	in (result,newS, a))
 -- The following line is slightly more complex because we are addressing the
 -- case where define is redefined by the user (whatever is the user's reason
 -- for doing so. The problem is that redefining define does not have
@@ -63,6 +60,7 @@ eval st ourLet@(List (Atom "let":(List bindings):body:[])) = ST (\s ->
 -- stored as a regular function because of its return type.
 eval st (List (Atom "define": args)) = maybe (define st args) (\v -> return v) (Map.lookup "define" state)
 eval st (List (Atom "set!": args)) = maybe (setVar st args) (\v -> return v) (Map.lookup "set!" state)
+eval st (List (Atom "list-comp": args)) = maybe (return (List (listComp st args))) (\v -> return v) (Map.lookup "list-comp" state)
 eval st (List (Atom func : args)) = mapM (eval st) args >>= apply st func 
 eval st (Error s)  = return (Error s)
 eval st form = return (Error ("Could not eval the special form: " ++ (show form)))
@@ -71,10 +69,9 @@ eval st form = return (Error ("Could not eval the special form: " ++ (show form)
 
 stateLookup :: StateT -> String -> StateTransformer LispVal
 stateLookup st var = ST $ 
-  (\s -> 
-    (maybe (Error "variable does not exist.") 
-           id (Map.lookup var (union s st) 
-    ), s))
+  (\s a -> 
+    (maybe (Error "variable does not exist.") id (Map.lookup var (union (union a st) s)), s, a)
+	)
 	
 
 
@@ -86,23 +83,31 @@ stateLookup st var = ST $
 -- not talking about local definitions. That's a completely different
 -- beast.
 define :: StateT -> [LispVal] -> StateTransformer LispVal
-define st [(Atom id), val] = defineVar st id val
-define st [(List [Atom id]), val] = defineVar st id val
+define st [(Atom id), val] = defineGlobalVar st id val
+define st [(List [Atom id]), val] = defineGlobalVar st id val
 define st args = return (Error "wrong number of arguments")
 
-defineVar :: StateT -> String -> LispVal -> StateTransformer LispVal
-defineVar env id val = 
-  ST (\s -> let (ST f)    = eval env val
-                (result, newState) = f s
-            in (result, (insert id result newState))
+defineGlobalVar :: StateT -> String -> LispVal -> StateTransformer LispVal
+defineGlobalVar env id val = 
+  ST (\s a -> let (ST f)    = eval env val
+                  (result, newState, newAmbient) = f s a
+              in (result, (insert id result newState), newAmbient)
+     )
+	 
+	 
+defineLocalVar :: StateT -> String -> LispVal -> StateTransformer LispVal
+defineLocalVar env id val = 
+  ST (\s a -> let (ST f)    = eval env val
+                  (result, newState, newAmbient) = f s a
+              in (result, newState, (insert id result newAmbient))
      )
 	 
 ---------------------------------------------------
 --LET
 --nossoLet::StateT->StateT->[LispVal]-> StateTransformer LispVal
 let' :: StateT -> [LispVal] -> LispVal -> StateTransformer LispVal
-let' st ((List ((Atom id):val:[])):[]) body = defineVar st id val >> eval st body
-let' st ((List ((Atom id):val:[])):xs) body = defineVar st id val >> let' st xs body
+let' st ((List ((Atom id):val:[])):[]) body = defineLocalVar st id val >> eval st body
+let' st ((List ((Atom id):val:[])):xs) body = defineLocalVar st id val >> let' st xs body
 let' st _ body = return (Error "wrong number of the goddamn arguments")
 
 
@@ -117,10 +122,21 @@ setVar st args = return (Error "wrong number of arguments")
 
 setVarAux :: StateT -> String -> LispVal -> StateTransformer LispVal
 setVarAux env id val = 
-  ST (\s -> let (ST f)    = eval env val
-                (result, newState) = f s
-            in (result, (update (\x-> Just result) id newState))
+  ST (\s a -> let (ST f)    = eval env val
+                  (result, newState, newAmbient) = f s a
+              in if ( id `member` newAmbient ) then (result, newState, (insert id result newAmbient)) else (result, (insert id result newState), newAmbient )
      )
+
+---------------------------------------------------
+--LIST-COMP
+listComp :: StateT -> [LispVal] -> [LispVal]
+listComp st ((Atom var):(List []):result:condition:[]) = []
+listComp st ((Atom var):(List (x:xs)):result:condition:[]) = if (res == (Bool True)) then (xok:(listComp st ((Atom var):(List xs):result:condition:[]))) else (listComp st ((Atom var):(List xs):result:condition:[]))
+                                                            where (ST m) = defineLocalVar st var x >> eval st condition
+                                                                  (res, a, b) = m st Map.empty --pegar o resultado da condição
+                                                                  (ST m2) = defineLocalVar st var x >> eval st result
+                                                                  (xok, k, l) = m2 st Map.empty
+listComp st _ = [Error "wrong number of arguments"]
 
 
 -- The maybe function yields a value of type b if the evaluation of 
@@ -188,13 +204,13 @@ type StateT = Map String LispVal
 -- because a StateTransformer gets the previous state of the interpreter 
 -- and, based on that state, performs a computation that might yield a modified
 -- state (a modification of the previous one). 
-data StateTransformer t = ST (StateT -> (t, StateT))
+data StateTransformer t = ST (StateT -> StateT -> (t, StateT, StateT))
 
 instance Monad StateTransformer where
-  return x = ST (\s -> (x, s))
-  (>>=) (ST m) f = ST (\s -> let (v, newS) = m s
-                                 (ST resF) = f v
-                             in  resF newS
+  return x = ST (\s a -> (x, s, a))
+  (>>=) (ST m) f = ST (\s a -> let (v, newS, newA) = m s a
+                                   (ST resF) = f v
+                               in  resF newS newA
                       )
     
 -----------------------------------------------------------
@@ -418,11 +434,11 @@ cleanAux (n:ls) = (n:(cleanAux ls))
 --                     main FUNCTION                     --
 -----------------------------------------------------------
 
-showResult :: (LispVal, StateT) -> String
-showResult (val, defs) = show val ++ "\n" ++ show (toList defs)
+showResult :: (LispVal, StateT, StateT) -> String
+showResult (val, defs, _) = show val ++ "\n" ++ show (toList defs)
 
-getResult :: StateTransformer LispVal -> (LispVal, StateT)
-getResult (ST f) = f state
+getResult :: StateTransformer LispVal -> (LispVal, StateT, StateT)
+getResult (ST f) = f state Map.empty
 
 trim::String->String
 trim = Prelude.filter (\x->(not (x `elem` "\r\t\n")))
