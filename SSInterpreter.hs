@@ -241,7 +241,6 @@ numericMult l = numericBinOp (*) l
 
 numericSub :: [LispVal] -> LispVal
 numericSub [] = Error "wrong number of arguments."
--- The following case handles negative number literals.
 numericSub [x] = if onlyNumbers [x]
                  then (\num -> (Number (- num))) (unpackNum x)
                  else Error "not a number."
@@ -292,12 +291,25 @@ numericMod (Number n:Number m:l) = Error "wrong number of arguments."
 
 ---------------------------------------------------
 --EQV?
+igualList :: LispVal -> LispVal -> Bool
+igualList (List []) (List []) = True
+igualList (List l) (List []) = False
+igualList (List []) (List l) = False
+igualList (List (n:ns)) (List (m:ms)) = (n == m) && (igualList (List ns) (List ms))
+
+igualDottedList :: LispVal -> LispVal -> Bool
+igualDottedList (DottedList [] n) (DottedList [] m) = n == m
+igualDottedList (DottedList [] n) (DottedList k m) = False
+igualDottedList (DottedList l n) (DottedList [] m) = False
+igualDottedList (DottedList (l:ls) n) (DottedList (k:ks) m) = (l == k) && (igualDottedList (DottedList ls n) (DottedList ks m))
 
 igual :: LispVal -> LispVal -> Bool
+igual (Atom n) (Atom m) = n == m
 igual (Number n) (Number m) = n == m
 igual (Bool n) (Bool m) = n == m
 igual (String n) (String m) = n == m
-igual (List n) (List m) = n == m
+igual (List n) (List m) = igualList (List n) (List m)
+igual (DottedList l n) (DottedList k m) = igualDottedList (DottedList l n) (DottedList k m)
 
 instance Eq LispVal where
    (==) n m = igual n m
@@ -369,6 +381,7 @@ notOp ls = Error "wrong number of arguments."
 
 ifThenElse :: [LispVal] -> LispVal
 ifThenElse ((Bool predicate):body1:body2:_) = if predicate then body1 else body2
+ifThenElse ((Bool predicate):body1:_) = if predicate then body1 else Error "Expression Unspecified"
 ifThenElse l = Error "wrong number of arguments."
 
 ---------------------------------------------------
@@ -376,6 +389,7 @@ ifThenElse l = Error "wrong number of arguments."
 
 concatenation :: [LispVal] -> LispVal
 concatenation (element: (List l):_) = List (element:l)
+concatenation (element1:element2:_) = DottedList [element1] element2
 concatenation l = Error "wrong number of arguments."
 
 ---------------------------------------------------
@@ -385,15 +399,6 @@ lengthList :: [LispVal] -> LispVal
 lengthList ((List l):_) = Number (toInteger (length l))
 lengthList ls = Error "wrong number of arguments."
 
------------------------------------------------------------
---                     main FUNCTION                     --
------------------------------------------------------------
-
-showResult :: (LispVal, StateT) -> String
-showResult (val, defs) = show val ++ "\n" ++ show (toList defs)
-
-getResult :: StateTransformer LispVal -> (LispVal, StateT)
-getResult (ST f) = f Map.empty --state
 
 ---------------------------------------------------
 --COMMENTS
@@ -404,10 +409,20 @@ clean n = n
 
 cleanAux :: [LispVal] -> [LispVal]
 cleanAux [] = []
-cleanAux ((Atom f):args:ls) | f == "--" = (cleanAux ls)
-                            | otherwise = ((Atom f):(clean args):(cleanAux ls))
+cleanAux ((Atom "comment"):(String c):ls) = cleanAux ls
+cleanAux ((Atom f):args:ls) = ((Atom f):(clean args):(cleanAux ls))
 cleanAux ((List args):ls) = ((clean (List args)):(cleanAux ls))
 cleanAux (n:ls) = (n:(cleanAux ls))
+
+-----------------------------------------------------------
+--                     main FUNCTION                     --
+-----------------------------------------------------------
+
+showResult :: (LispVal, StateT) -> String
+showResult (val, defs) = show val ++ "\n" ++ show (toList defs)
+
+getResult :: StateTransformer LispVal -> (LispVal, StateT)
+getResult (ST f) = f state
 
 trim::String->String
 trim = Prelude.filter (\x->(not (x `elem` "\r\t\n")))

@@ -1,0 +1,4 @@
+Separar o StateT entre um Map que irá armazenar a memória GLOBAL e outro Map que irá armazenar a memória LOCAL.
+Essa memória local será passada como parâmetro da função LET essa função irá concatenar o seu estado local com o estado local mais externo.
+
+Quando a função precisar dar um LOOKUP em alguma variável, a memória que será passada como parâmetro do LOOKUP vai ser a concatenação GLOBAL++LOCAL
