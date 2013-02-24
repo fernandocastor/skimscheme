@@ -48,7 +48,14 @@ eval st (List [Atom "quote", val]) = return val
 eval st (List (Atom "begin":[v])) = eval st v
 eval st (List (Atom "begin": l: ls)) = eval st l >> eval st (List (Atom "begin": ls))
 eval st (List (Atom "begin":[])) = return (List [])
+
+
+
 eval st lam@(List (Atom "lambda":(List formals):body:[])) = return lam
+eval st ourLet@(List (Atom "let":(List bindings):body:[])) = ST (\s a -> 
+																	let	(ST m) = let' st bindings body
+																		(result, newS, newA) = m s a
+																	in (result,newS, a))
 -- The following line is slightly more complex because we are addressing the
 -- case where define is redefined by the user (whatever is the user's reason
 -- for doing so. The problem is that redefining define does not have
@@ -60,12 +67,15 @@ eval st (List (Atom func : args)) = mapM (eval st) args >>= apply st func
 eval st (Error s)  = return (Error s)
 eval st form = return (Error ("Could not eval the special form: " ++ (show form)))
 
+
+
 stateLookup :: StateT -> String -> StateTransformer LispVal
 stateLookup st var = ST $ 
-  (\s -> 
-    (maybe (Error "variable does not exist.") 
-           id (Map.lookup var (union s st) 
-    ), s))
+  (\s a -> 
+    (maybe (Error "variable does not exist.") id (Map.lookup var (union (union a st) s)), s, a)
+	)
+	
+
 
 
 -- Because of monad complications, define is a separate function that is not
@@ -75,30 +85,48 @@ stateLookup st var = ST $
 -- not talking about local definitions. That's a completely different
 -- beast.
 define :: StateT -> [LispVal] -> StateTransformer LispVal
-define st [(Atom id), val] = defineVar st id val
-define st [(List [Atom id]), val] = defineVar st id val
+define st [(Atom id), val] = defineGlobalVar st id val
+define st [(List [Atom id]), val] = defineGlobalVar st id val
 define st args = return (Error "wrong number of arguments")
 
-defineVar :: StateT -> String -> LispVal -> StateTransformer LispVal
-defineVar env id val = 
-  ST (\s -> let (ST f)    = eval env val
-                (result, newState) = f s
-            in (result, (insert id result newState))
+defineGlobalVar :: StateT -> String -> LispVal -> StateTransformer LispVal
+defineGlobalVar env id val = 
+  ST (\s a -> let (ST f)    = eval env val
+                  (result, newState, newAmbient) = f s a
+              in (result, (insert id result newState), newAmbient)
      )
+	 
+	 
+defineLocalVar :: StateT -> String -> LispVal -> StateTransformer LispVal
+defineLocalVar env id val = 
+  ST (\s a -> let (ST f)    = eval env val
+                  (result, newState, newAmbient) = f s a
+              in (result, newState, (insert id result newAmbient))
+     )
+	 
+---------------------------------------------------
+--LET
+--nossoLet::StateT->StateT->[LispVal]-> StateTransformer LispVal
+let' :: StateT -> [LispVal] -> LispVal -> StateTransformer LispVal
+let' st ((List ((Atom id):val:[])):[]) body = defineLocalVar st id val >> eval st body
+let' st ((List ((Atom id):val:[])):xs) body = defineLocalVar st id val >> let' st xs body
+let' st _ body = return (Error "wrong number of the goddamn arguments")
+
+
 
 ---------------------------------------------------
 --SET!
 
 setVar :: StateT -> [LispVal] -> StateTransformer LispVal
 setVar st [(Atom id), val] = setVarAux st id val
-setVar st [(List [Atom id]), val] = setVarAux st id val
+setVar st [(List [Atom id]) , val] = setVarAux st id val
 setVar st args = return (Error "wrong number of arguments")
 
 setVarAux :: StateT -> String -> LispVal -> StateTransformer LispVal
 setVarAux env id val = 
-  ST (\s -> let (ST f)    = eval env val
-                (result, newState) = f s
-            in (result, (insert id result newState))
+  ST (\s a -> let (ST f)    = eval env val
+                  (result, newState, newAmbient) = f s a
+              in if ( id `member` newAmbient ) then (result, newState, (insert id result newAmbient)) else (result, (insert id result newState), newAmbient )
      )
 
 
@@ -114,7 +142,7 @@ apply st func args =
                       otherwise -> 
                         (stateLookup st func >>= \res -> 
                           case res of 
-                            List (Atom "lambda" : List formals : body:l) -> lambda st formals body args 
+                            List (Atom "lambda" : List formals : body:l) -> lambda st formals body args
                             otherwise -> return (Error "not a function.")
                         )
  
@@ -167,13 +195,13 @@ type StateT = Map String LispVal
 -- because a StateTransformer gets the previous state of the interpreter 
 -- and, based on that state, performs a computation that might yield a modified
 -- state (a modification of the previous one). 
-data StateTransformer t = ST (StateT -> (t, StateT))
+data StateTransformer t = ST (StateT -> StateT -> (t, StateT, StateT))
 
 instance Monad StateTransformer where
-  return x = ST (\s -> (x, s))
-  (>>=) (ST m) f = ST (\s -> let (v, newS) = m s
-                                 (ST resF) = f v
-                             in  resF newS
+  return x = ST (\s a -> (x, s, a))
+  (>>=) (ST m) f = ST (\s a -> let (v, newS, newA) = m s a
+                                   (ST resF) = f v
+                               in  resF newS newA
                       )
     
 -----------------------------------------------------------
@@ -220,7 +248,6 @@ numericMult l = numericBinOp (*) l
 
 numericSub :: [LispVal] -> LispVal
 numericSub [] = Error "wrong number of arguments."
--- The following case handles negative number literals.
 numericSub [x] = if onlyNumbers [x]
                  then (\num -> (Number (- num))) (unpackNum x)
                  else Error "not a number."
@@ -271,13 +298,25 @@ numericMod (Number n:Number m:l) = Error "wrong number of arguments."
 
 ---------------------------------------------------
 --EQV?
+igualList :: LispVal -> LispVal -> Bool
+igualList (List []) (List []) = True
+igualList (List l) (List []) = False
+igualList (List []) (List l) = False
+igualList (List (n:ns)) (List (m:ms)) = (n == m) && (igualList (List ns) (List ms))
+
+igualDottedList :: LispVal -> LispVal -> Bool
+igualDottedList (DottedList [] n) (DottedList [] m) = n == m
+igualDottedList (DottedList [] n) (DottedList k m) = False
+igualDottedList (DottedList l n) (DottedList [] m) = False
+igualDottedList (DottedList (l:ls) n) (DottedList (k:ks) m) = (l == k) && (igualDottedList (DottedList ls n) (DottedList ks m))
 
 igual :: LispVal -> LispVal -> Bool
+igual (Atom n) (Atom m) = n == m
 igual (Number n) (Number m) = n == m
 igual (Bool n) (Bool m) = n == m
 igual (String n) (String m) = n == m
-igual (List n) (List m) = n == m
-igual (DottedList l n) (DottedList k m) = ((l == k) && (n == m))
+igual (List n) (List m) = igualList (List n) (List m)
+igual (DottedList l n) (DottedList k m) = igualDottedList (DottedList l n) (DottedList k m)
 
 instance Eq LispVal where
    (==) n m = igual n m
@@ -349,6 +388,7 @@ notOp ls = Error "wrong number of arguments."
 
 ifThenElse :: [LispVal] -> LispVal
 ifThenElse ((Bool predicate):body1:body2:_) = if predicate then body1 else body2
+ifThenElse ((Bool predicate):body1:_) = if predicate then body1 else Error "Expression Unspecified"
 ifThenElse l = Error "wrong number of arguments."
 
 ---------------------------------------------------
@@ -356,6 +396,7 @@ ifThenElse l = Error "wrong number of arguments."
 
 concatenation :: [LispVal] -> LispVal
 concatenation (element: (List l):_) = List (element:l)
+concatenation (element1:element2:_) = DottedList [element1] element2
 concatenation l = Error "wrong number of arguments."
 
 ---------------------------------------------------
@@ -365,15 +406,6 @@ lengthList :: [LispVal] -> LispVal
 lengthList ((List l):_) = Number (toInteger (length l))
 lengthList ls = Error "wrong number of arguments."
 
------------------------------------------------------------
---                     main FUNCTION                     --
------------------------------------------------------------
-
-showResult :: (LispVal, StateT) -> String
-showResult (val, defs) = show val ++ "\n" ++ show (toList defs)
-
-getResult :: StateTransformer LispVal -> (LispVal, StateT)
-getResult (ST f) = f state
 
 ---------------------------------------------------
 --COMMENTS
@@ -384,10 +416,20 @@ clean n = n
 
 cleanAux :: [LispVal] -> [LispVal]
 cleanAux [] = []
-cleanAux ((Atom f):args:ls) | f == "--" = (cleanAux ls)
-                            | otherwise = ((Atom f):(clean args):(cleanAux ls))
+cleanAux ((Atom "comment"):(String c):ls) = cleanAux ls
+cleanAux ((Atom f):args:ls) = ((Atom f):(clean args):(cleanAux ls))
 cleanAux ((List args):ls) = ((clean (List args)):(cleanAux ls))
 cleanAux (n:ls) = (n:(cleanAux ls))
+
+-----------------------------------------------------------
+--                     main FUNCTION                     --
+-----------------------------------------------------------
+
+showResult :: (LispVal, StateT, StateT) -> String
+showResult (val, defs, _) = show val ++ "\n" ++ show (toList defs)
+
+getResult :: StateTransformer LispVal -> (LispVal, StateT, StateT)
+getResult (ST f) = f state Map.empty
 
 trim::String->String
 trim = Prelude.filter (\x->(not (x `elem` "\r\t\n")))
