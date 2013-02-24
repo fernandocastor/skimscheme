@@ -48,9 +48,6 @@ eval st (List [Atom "quote", val]) = return val
 eval st (List (Atom "begin":[v])) = eval st v
 eval st (List (Atom "begin": l: ls)) = eval st l >> eval st (List (Atom "begin": ls))
 eval st (List (Atom "begin":[])) = return (List [])
-
-
-
 eval st lam@(List (Atom "lambda":(List formals):body:[])) = return lam
 eval st ourLet@(List (Atom "let":(List bindings):body:[])) = ST (\s a -> 
 																	let	(ST m) = let' st bindings body
@@ -63,6 +60,7 @@ eval st ourLet@(List (Atom "let":(List bindings):body:[])) = ST (\s a ->
 -- stored as a regular function because of its return type.
 eval st (List (Atom "define": args)) = maybe (define st args) (\v -> return v) (Map.lookup "define" state)
 eval st (List (Atom "set!": args)) = maybe (setVar st args) (\v -> return v) (Map.lookup "set!" state)
+eval st (List (Atom "list-comp": args)) = maybe (return (List (listComp st args))) (\v -> return v) (Map.lookup "list-comp" state)
 eval st (List (Atom func : args)) = mapM (eval st) args >>= apply st func 
 eval st (Error s)  = return (Error s)
 eval st form = return (Error ("Could not eval the special form: " ++ (show form)))
@@ -128,6 +126,17 @@ setVarAux env id val =
                   (result, newState, newAmbient) = f s a
               in if ( id `member` newAmbient ) then (result, newState, (insert id result newAmbient)) else (result, (insert id result newState), newAmbient )
      )
+
+---------------------------------------------------
+--LIST-COMP
+listComp :: StateT -> [LispVal] -> [LispVal]
+listComp st ((Atom var):(List []):result:condition:[]) = []
+listComp st ((Atom var):(List (x:xs)):result:condition:[]) = if (res == (Bool True)) then (xok:(listComp st ((Atom var):(List xs):result:condition:[]))) else (listComp st ((Atom var):(List xs):result:condition:[]))
+                                                            where (ST m) = defineLocalVar st var x >> eval st condition
+                                                                  (res, a, b) = m st Map.empty --pegar o resultado da condição
+                                                                  (ST m2) = defineLocalVar st var x >> eval st result
+                                                                  (xok, k, l) = m2 st Map.empty
+listComp st _ = [Error "wrong number of arguments"]
 
 
 -- The maybe function yields a value of type b if the evaluation of 

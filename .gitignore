@@ -1,3 +1,4 @@
 *.o
 *.hi
 SSInterpreter.exe
+schemeCode.scm

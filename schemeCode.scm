@@ -1,9 +1,4 @@
-<<<<<<< HEAD
-(define a (if (< 2 3) (+ 2 a) (- 2 a)))
-=======
 (begin
-  (define f 10)
-  (let ((g 3)) (+ f (set! g (+ f g))))
-  f
+  (define a (list-comp x (1 2 3 4 5 6 7 8 9 10) (let ((a 2) (b 3)) (+ x a b)) (eqv? (mod x 2) 0)))
+  a
 )
->>>>>>> 00cd060ae68fab2b7bb6f0a506a670adb766cb7b
