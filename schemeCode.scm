@@ -1,9 +1,3 @@
-(begin 
-  (define f 
-    (lambda (x) (+ x 10))
-  ) 
-  (define result 
-    (f (car '(50 34 567 433 22 23 2345 "ok" (6 87 6))))
-  ) 
-  result
+(begin
+  (let ((f 3) (x 2) (y 3) (z (+ 2 8)) ) (+ f x y z))
 )
