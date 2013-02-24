@@ -48,7 +48,14 @@ eval st (List [Atom "quote", val]) = return val
 eval st (List (Atom "begin":[v])) = eval st v
 eval st (List (Atom "begin": l: ls)) = eval st l >> eval st (List (Atom "begin": ls))
 eval st (List (Atom "begin":[])) = return (List [])
+
+
+
 eval st lam@(List (Atom "lambda":(List formals):body:[])) = return lam
+eval st ourLet@(List (Atom "let":(List bindings):body:[])) = ST (\s -> 
+																	let	(ST m) = let' st bindings body
+																		(result, newS) = m s
+																	in (result,s))
 -- The following line is slightly more complex because we are addressing the
 -- case where define is redefined by the user (whatever is the user's reason
 -- for doing so. The problem is that redefining define does not have
@@ -60,12 +67,16 @@ eval st (List (Atom func : args)) = mapM (eval st) args >>= apply st func
 eval st (Error s)  = return (Error s)
 eval st form = return (Error ("Could not eval the special form: " ++ (show form)))
 
+
+
 stateLookup :: StateT -> String -> StateTransformer LispVal
 stateLookup st var = ST $ 
   (\s -> 
     (maybe (Error "variable does not exist.") 
            id (Map.lookup var (union s st) 
     ), s))
+	
+
 
 
 -- Because of monad complications, define is a separate function that is not
@@ -85,20 +96,30 @@ defineVar env id val =
                 (result, newState) = f s
             in (result, (insert id result newState))
      )
+	 
+---------------------------------------------------
+--LET
+--nossoLet::StateT->StateT->[LispVal]-> StateTransformer LispVal
+let' :: StateT -> [LispVal] -> LispVal -> StateTransformer LispVal
+let' st ((List ((Atom id):val:[])):[]) body = defineVar st id val >> eval st body
+let' st ((List ((Atom id):val:[])):xs) body = defineVar st id val >> let' st xs body
+let' st _ body = return (Error "wrong number of the goddamn arguments")
+
+
 
 ---------------------------------------------------
 --SET!
 
 setVar :: StateT -> [LispVal] -> StateTransformer LispVal
 setVar st [(Atom id), val] = setVarAux st id val
-setVar st [(List [Atom id]), val] = setVarAux st id val
+setVar st [(List [Atom id]) , val] = setVarAux st id val
 setVar st args = return (Error "wrong number of arguments")
 
 setVarAux :: StateT -> String -> LispVal -> StateTransformer LispVal
 setVarAux env id val = 
   ST (\s -> let (ST f)    = eval env val
                 (result, newState) = f s
-            in (result, (insert id result newState))
+            in (result, (update (\x-> Just result) id newState))
      )
 
 
@@ -114,7 +135,7 @@ apply st func args =
                       otherwise -> 
                         (stateLookup st func >>= \res -> 
                           case res of 
-                            List (Atom "lambda" : List formals : body:l) -> lambda st formals body args 
+                            List (Atom "lambda" : List formals : body:l) -> lambda st formals body args
                             otherwise -> return (Error "not a function.")
                         )
  
@@ -377,6 +398,7 @@ concatenation l = Error "wrong number of arguments."
 lengthList :: [LispVal] -> LispVal
 lengthList ((List l):_) = Number (toInteger (length l))
 lengthList ls = Error "wrong number of arguments."
+
 
 ---------------------------------------------------
 --COMMENTS
