@@ -60,6 +60,7 @@ eval st ourLet@(List (Atom "let":(List bindings):body:[])) = ST (\s a ->
 -- stored as a regular function because of its return type.
 eval st (List (Atom "define": args)) = maybe (define st args) (\v -> return v) (Map.lookup "define" state)
 eval st (List (Atom "set!": args)) = maybe (setVar st args) (\v -> return v) (Map.lookup "set!" state)
+eval st (List (Atom "do": args)) = maybe (doFunc st (List args)) (\v -> return v) (Map.lookup "do" state)
 eval st (List (Atom "list-comp": args)) = maybe (return (List (listComp st args))) (\v -> return v) (Map.lookup "list-comp" state)
 eval st (List (Atom func : args)) = mapM (eval st) args >>= apply st func 
 eval st (Error s)  = return (Error s)
@@ -131,14 +132,51 @@ setVarAux env id val =
 --LIST-COMP
 listComp :: StateT -> [LispVal] -> [LispVal]
 listComp st ((Atom var):(List []):result:condition:[]) = []
-listComp st ((Atom var):(List (x:xs)):result:condition:[]) = if (res == (Bool True)) then (xok:(listComp st ((Atom var):(List xs):result:condition:[]))) else (listComp st ((Atom var):(List xs):result:condition:[]))
+listComp st ((Atom var):(List (x:xs)):result:condition:[]) = if (test == (Bool True)) then (xResult:(listComp st ((Atom var):(List xs):result:condition:[]))) else (listComp st ((Atom var):(List xs):result:condition:[]))
                                                             where (ST m) = defineLocalVar st var x >> eval st condition
-                                                                  (res, a, b) = m st Map.empty --pegar o resultado da condição
-                                                                  (ST m2) = defineLocalVar st var x >> eval st result
-                                                                  (xok, k, l) = m2 st Map.empty
+                                                                  (test, newS, newA) = m Map.empty Map.empty --pegar o resultado da condição
+                                                                  (ST m2) = (ST m) >> eval st result
+                                                                  (xResult, newS2, newA2) = m2 Map.empty Map.empty --pegar o resultado da operação sobre o elemento que será inserido na lista
 listComp st _ = [Error "wrong number of arguments"]
 
+---------------------------------------------------
+--DO
 
+doVar :: StateT -> [LispVal] ->StateTransformer LispVal
+doVar st ((Atom var):initial:step:[]) = 
+  ST (\s a -> let (ST m) = eval st initial
+                  (resultInit, newStateI, newAmbientI) = m s a --Avaliando o valor inicial da variavel
+                  (ST m2) = eval st step
+                  (resultStep, newStateS, newAmbientS) = m2 s a --Avaliando o valor da variável aplicando a expressão do passo (step)
+              in if (var `member` a) then (resultStep, newStateS, (insert var resultStep newAmbientS)) else (resultInit, newStateS, (insert var resultInit newAmbientI))
+      )
+
+doVarAux :: StateT -> LispVal -> StateTransformer LispVal
+doVarAux st (List ((List initials):[])) = doVar st initials
+doVarAux st (List ((List initials):ls)) = doVar st initials >> doVarAux st (List ls)
+doVarAux st _ = return (Error "wrong number of arguments")
+
+doExpr :: StateT -> [LispVal] -> StateTransformer LispVal
+doExpr st (expr:[]) = eval st expr
+doExpr st (expr:exps) = eval st expr >> doExpr st exps
+
+doFunc :: StateT -> LispVal -> StateTransformer LispVal
+doFunc st (List ((List initials):(List (condition:exps)):[])) = doVarAux st (List initials) >> 
+                                                                            ST (\s a -> let (ST m) = eval st condition
+                                                                                            (resultCond, newS, newA) = m s a
+                                                                                            (ST m2) = doExpr st exps
+                                                                                            (ST m3) = doFunc st (List ((List initials):(List (condition:exps)):[]))
+                                                                                        in if (resultCond == (Bool True)) then (m2 s a) else (m3 s a)
+                                                                                )
+doFunc st (List ((List initials):(List (condition:exps)):command:[])) = doVarAux st (List initials) >> 
+                                                                            ST (\s a -> let (ST m) = eval st condition
+                                                                                            (resultCond, newS, newA) = m s a
+                                                                                            (ST m2) = doExpr st exps
+                                                                                            (ST m3) = eval st command >> doFunc st (List ((List initials):(List (condition:exps)):command:[]))
+                                                                                        in if (resultCond == (Bool True)) then (m2 s a) else (m3 s a)
+                                                                                )
+                                                                                        
+                                                                              
 -- The maybe function yields a value of type b if the evaluation of 
 -- its third argument yields Nothing. In case it yields Just x, maybe
 -- applies its second argument f to x and yields (f x) as its result.

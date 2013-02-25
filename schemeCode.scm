@@ -1,5 +1,1 @@
-(begin
-  (define a (list-comp x (1 2 3 4 5 6 7 8 9 10) (let ((a 2) (b 3)) (+ x a b)) (eqv? (mod x 2) 0)))
-  a
-)
-
+(let ((x '(1 3 5 7 9))) (do ((x x (cdr x)) (sum 0 (+ sum (car x)))) ((eqv? x '()) sum)))
