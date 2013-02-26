@@ -86,6 +86,7 @@ stateLookup st var = ST $
 define :: StateT -> [LispVal] -> StateTransformer LispVal
 define st [(Atom id), val] = defineGlobalVar st id val
 define st [(List [Atom id]), val] = defineGlobalVar st id val
+--define st [(List ((Atom func):vars)] = 
 define st args = return (Error "wrong number of arguments")
 
 defineGlobalVar :: StateT -> String -> LispVal -> StateTransformer LispVal
@@ -175,6 +176,7 @@ doFunc st (List ((List initials):(List (condition:exps)):command:[])) = doVarAux
                                                                                             (ST m3) = eval st command >> doFunc st (List ((List initials):(List (condition:exps)):command:[]))
                                                                                         in if (resultCond == (Bool True)) then (m2 s a) else (m3 s a)
                                                                                 )
+doFunc st _ = Error "wrong number of arguments"
                                                                                         
                                                                               
 -- The maybe function yields a value of type b if the evaluation of 
@@ -364,6 +366,7 @@ igual (Bool n) (Bool m) = n == m
 igual (String n) (String m) = n == m
 igual (List n) (List m) = igualList (List n) (List m)
 igual (DottedList l n) (DottedList k m) = igualDottedList (DottedList l n) (DottedList k m)
+igual n m = False
 
 instance Eq LispVal where
    (==) n m = igual n m
