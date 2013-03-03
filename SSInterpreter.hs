@@ -86,7 +86,6 @@ stateLookup st var = ST $
 define :: StateT -> [LispVal] -> StateTransformer LispVal
 define st [(Atom id), val] = defineGlobalVar st id val
 define st [(List [Atom id]), val] = defineGlobalVar st id val
---define st [(List ((Atom func):vars)] = 
 define st args = return (Error "wrong number of arguments")
 
 defineGlobalVar :: StateT -> String -> LispVal -> StateTransformer LispVal
@@ -176,9 +175,9 @@ doFunc st (List ((List initials):(List (condition:exps)):command:[])) = doVarAux
                                                                                             (ST m3) = eval st command >> doFunc st (List ((List initials):(List (condition:exps)):command:[]))
                                                                                         in if (resultCond == (Bool True)) then (m2 s a) else (m3 s a)
                                                                                 )
-doFunc st _ = Error "wrong number of arguments"
-                                                                                        
-                                                                              
+doFunc st _ = return (Error "wrong number of arguments")
+
+
 -- The maybe function yields a value of type b if the evaluation of 
 -- its third argument yields Nothing. In case it yields Just x, maybe
 -- applies its second argument f to x and yields (f x) as its result.
@@ -199,11 +198,38 @@ apply st func args =
 -- applying user-defined functions, instead of native ones. We use a very stupid 
 -- kind of dynamic variable (parameter) scoping that does not even support
 -- recursion. This has to be fixed in the project.
-lambda :: StateT -> [LispVal] -> LispVal -> [LispVal] -> StateTransformer LispVal
-lambda st formals body args = 
-  let dynEnv = Prelude.foldr (\(Atom f, a) m -> Map.insert f a m) st (zip formals args)
-  in  eval dynEnv body
+defineLambdaVar :: StateT -> String -> LispVal -> StateTransformer LispVal
+defineLambdaVar env id val = 
+  ST (\s a -> let (ST f)    = eval env val
+                  (result, newState, newAmbient) = f s a
+              in (result, newState, newAmbient)
+     )
 
+lambdaVar :: StateT -> [LispVal] -> [LispVal] -> StateTransformer LispVal
+lambdaVar st ((Atom var):[]) (arg:[]) = defineLocalVar st var arg
+lambdaVar st ((Atom var):vars) (arg:args) = defineLocalVar st var arg >> lambdaVar st vars args
+lambdaVar st _ _ = return (Error "wrong number of arguments")
+
+
+lambda :: StateT -> [LispVal] -> LispVal -> [LispVal] -> StateTransformer LispVal
+{-
+lambda st formals body args = ST (\s a ->
+  let dynEnv = Prelude.foldr (\(Atom f, a) m -> Map.insert f a m) state (zip formals args)
+      (ST m) = eval dynEnv body
+      (result, newState, newAmb) = m dynEnv Map.empty
+  in (result, s, a)
+  )
+
+lambda st formals body args = lambdaVar st formals args >> ST (\s a -> let (ST m) = eval st body
+                                                                           (result, newState, newAmbient) = m s a
+                                                                       in (result, s, a)
+                                                              )
+-}
+lambda st formals body args = ST (\ s a -> let (ST m) = lambdaVar st formals args
+                                               (resultVar, newS, newA) = m s a
+                                               (ST m2) = eval st body
+                                               (result, newS2, newA2) = m2 newS newA
+                                          in (result, s, a))
 
 -- Initial state of the programs. Maps identifiers to vaues. 
 -- Initially, maps function names to function values, but there's 
@@ -234,6 +260,7 @@ state =
           $ insert "if"             (Native ifThenElse)
           $ insert "cons"           (Native concatenation)
           $ insert "length"         (Native lengthList)
+          $ insert "concList"       (Native concList)
             empty
 
 type StateT = Map String LispVal
@@ -470,6 +497,12 @@ cleanAux ((Atom "comment"):(String c):ls) = cleanAux ls
 cleanAux ((Atom f):args:ls) = ((Atom f):(clean args):(cleanAux ls))
 cleanAux ((List args):ls) = ((clean (List args)):(cleanAux ls))
 cleanAux (n:ls) = (n:(cleanAux ls))
+
+---------------------------------------------------
+--CONCATENACAO DE LISTA
+concList :: [LispVal] -> LispVal
+concList ((List list1):(List list2):[]) = (List (list1 ++ list2))
+concList l = Error "wrong number of arguments."
 
 -----------------------------------------------------------
 --                     main FUNCTION                     --
