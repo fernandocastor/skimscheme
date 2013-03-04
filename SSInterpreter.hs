@@ -70,8 +70,14 @@ eval (List (Atom "list-comp": var:(Atom v):result:condition:[])) = ST (\s a -> l
 eval (List (Atom "list-comp": args)) = maybe (return (List (listComp args))) (\v -> return v) (Map.lookup "list-comp" state)
 -}
 
-eval (List (Atom "list-comp": var:listEvaluation:result:condition:[])) = listComp (var:listEvaluation:result:condition:[])
 
+eval (List (Atom "list-comp": var:list:result:condition:[])) = listComp (var:list:result:condition:[])
+
+eval (List (Atom "if":test:consequent:alternate:[])) = ST (\s a-> let (ST m) = eval test
+                                                                      (res, newS, newA) = m s a
+                                                                      (ST m2) = ifThenElse (res:consequent:alternate:[])
+                                                                  in m2 newS newA
+                                                          )
 {-
 eval (List (Atom "list-comp": var:listEvaluation:result:condition:[])) = ST (\s a -> let (ST m1) = eval listEvaluation
                                                                                          (r1, s1, a1) = m1 s a
@@ -123,6 +129,15 @@ defineLocalVar id val =
                   (result, newState, newAmbient) = f s a
               in (result, newState, (insert id result newAmbient))
      )
+
+
+---------------------------------------------------
+--IF THEN ELSE
+
+ifThenElse :: [LispVal] -> StateTransformer LispVal
+ifThenElse ((Bool test):consequent:alternate:[]) = if (test) then eval consequent else eval alternate
+ifThenElse ((Bool test):consequent:[]) = if (test) then eval consequent else return (Error "Expression Unspecified")
+ifThenElse l = return (Error ("wrong number of arguments. ifThenElse args = " ++ show(l)))
 	 
 ---------------------------------------------------
 --LET
@@ -301,7 +316,6 @@ state =
           $ insert "and"            (NativeComp andOp)
           $ insert "or"             (NativeComp orOp)
           $ insert "not"            (NativeComp notOp)
-          $ insert "if"             (Native ifThenElse)
           $ insert "cons"           (Native concatenation)
           $ insert "length"         (Native lengthList)
           $ insert "concList"       (Native concList)
@@ -323,6 +337,11 @@ instance Monad StateTransformer where
                                    (ST resF) = f v
                                in  resF newS newA
                       )
+
+
+
+
+
     
 -----------------------------------------------------------
 --          HARDWIRED PREDEFINED LISP FUNCTIONS          --
@@ -504,13 +523,7 @@ notOp :: [LispVal] -> LispVal
 notOp ((Bool a):[]) = Bool (not a)
 notOp ls = Error "wrong number of arguments. NotOP"
 
----------------------------------------------------
---IF THEN ELSE
 
-ifThenElse :: [LispVal] -> LispVal
-ifThenElse ((Bool predicate):body1:body2:_) = if predicate then body1 else body2
-ifThenElse ((Bool predicate):body1:_) = if predicate then body1 else Error "Expression Unspecified"
-ifThenElse l = Error ("wrong number of arguments. ifThenElse args = " ++ show(l))
 
 ---------------------------------------------------
 --CONS
