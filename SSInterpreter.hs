@@ -39,18 +39,18 @@ import SSPrettyPrinter
 -----------------------------------------------------------
 --                      INTERPRETER                      --
 -----------------------------------------------------------
-eval :: StateT -> LispVal -> StateTransformer LispVal
-eval st val@(String _) = return val
-eval st val@(Atom var) = stateLookup st var 
-eval st val@(Number _) = return val
-eval st val@(Bool _) = return val
-eval st (List [Atom "quote", val]) = return val
-eval st (List (Atom "begin":[v])) = eval st v
-eval st (List (Atom "begin": l: ls)) = eval st l >> eval st (List (Atom "begin": ls))
-eval st (List (Atom "begin":[])) = return (List [])
-eval st lam@(List (Atom "lambda":(List formals):body:[])) = return lam
-eval st ourLet@(List (Atom "let":(List bindings):body:[])) = ST (\s a -> 
-																	let	(ST m) = let' st bindings body
+eval :: LispVal -> StateTransformer LispVal
+eval val@(String _) = return val
+eval val@(Atom var) = stateLookup var 
+eval val@(Number _) = return val
+eval val@(Bool _) = return val
+eval (List [Atom "quote", val]) = return val
+eval (List (Atom "begin":[v])) = eval v
+eval (List (Atom "begin": l: ls)) = eval l >> eval (List (Atom "begin": ls))
+eval (List (Atom "begin":[])) = return (List [])
+eval lam@(List (Atom "lambda":(List formals):body:[])) = return lam
+eval ourLet@(List (Atom "let":(List bindings):body:[])) = ST (\s a -> 
+																	let	(ST m) = let' bindings body
 																		(result, newS, newA) = m s a
 																	in (result,newS, a))
 -- The following line is slightly more complex because we are addressing the
@@ -58,20 +58,37 @@ eval st ourLet@(List (Atom "let":(List bindings):body:[])) = ST (\s a ->
 -- for doing so. The problem is that redefining define does not have
 -- the same semantics as redefining other functions, since define is not
 -- stored as a regular function because of its return type.
-eval st (List (Atom "define": args)) = maybe (define st args) (\v -> return v) (Map.lookup "define" state)
-eval st (List (Atom "set!": args)) = maybe (setVar st args) (\v -> return v) (Map.lookup "set!" state)
-eval st (List (Atom "do": args)) = maybe (doFunc st (List args)) (\v -> return v) (Map.lookup "do" state)
-eval st (List (Atom "list-comp": args)) = maybe (return (List (listComp st args))) (\v -> return v) (Map.lookup "list-comp" state)
-eval st (List (Atom func : args)) = mapM (eval st) args >>= apply st func 
-eval st (Error s)  = return (Error s)
-eval st form = return (Error ("Could not eval the special form: " ++ (show form)))
+eval (List (Atom "define": args)) = maybe (define args) (\v -> return v) (Map.lookup "define" state)
+eval (List (Atom "set!": args)) = maybe (setVar args) (\v -> return v) (Map.lookup "set!" state)
+eval (List (Atom "do": args)) = maybe (doFunc (List args)) (\v -> return v) (Map.lookup "do" state)
+{-
+eval (List (Atom "list-comp": var:(Atom v):result:condition:[])) = ST (\s a -> let (ST m1) = stateLookup v
+                                                                                   (r1, s1, a1) = m1 s a
+                                                                                   (ST m2) = eval (List (Atom "list-comp": var:r1:result:condition:[])) 
+                                                                               in m2 s1 a1
+                                                                            )
+eval (List (Atom "list-comp": args)) = maybe (return (List (listComp args))) (\v -> return v) (Map.lookup "list-comp" state)
+-}
+
+
+eval (List (Atom "list-comp": var:listEvaluation:result:condition:[])) = ST (\s a -> let (ST m1) = eval listEvaluation
+                                                                                         (r1, s1, a1) = m1 s a
+                                                                                         r2 = listComp (var:r1:result:condition:[]) 
+                                                                                     in  (List r2, s, a)
+                                                                            )
+eval (List (Atom "list-comp": args)) = maybe (return (List (listComp args))) (\v -> return v) (Map.lookup "list-comp" state)
+
+
+eval (List (Atom func : args)) = mapM eval args >>= apply func 
+eval (Error s)  = return (Error s)
+eval form = return (Error ("Could not eval the special form: " ++ (show form)))
 
 
 
-stateLookup :: StateT -> String -> StateTransformer LispVal
-stateLookup st var = ST $ 
+stateLookup :: String -> StateTransformer LispVal
+stateLookup var = ST $ 
   (\s a -> 
-    (maybe (Error "variable does not exist.") id (Map.lookup var (union (union a st) s)), s, a)
+    (maybe (Error "variable does not exist.") id (Map.lookup var (union a s)), s, a)
 	)
 	
 
@@ -83,22 +100,22 @@ stateLookup st var = ST $
 -- complicate state management. The same principle applies to set!. We are still
 -- not talking about local definitions. That's a completely different
 -- beast.
-define :: StateT -> [LispVal] -> StateTransformer LispVal
-define st [(Atom id), val] = defineGlobalVar st id val
-define st [(List [Atom id]), val] = defineGlobalVar st id val
-define st args = return (Error "wrong number of arguments")
+define :: [LispVal] -> StateTransformer LispVal
+define [(Atom id), val] = defineGlobalVar id val
+define [(List [Atom id]), val] = defineGlobalVar id val
+define args = return (Error "wrong number of arguments. define")
 
-defineGlobalVar :: StateT -> String -> LispVal -> StateTransformer LispVal
-defineGlobalVar env id val = 
-  ST (\s a -> let (ST f)    = eval env val
+defineGlobalVar :: String -> LispVal -> StateTransformer LispVal
+defineGlobalVar id val = 
+  ST (\s a -> let (ST f)    = eval val
                   (result, newState, newAmbient) = f s a
               in (result, (insert id result newState), newAmbient)
      )
 	 
 	 
-defineLocalVar :: StateT -> String -> LispVal -> StateTransformer LispVal
-defineLocalVar env id val = 
-  ST (\s a -> let (ST f)    = eval env val
+defineLocalVar :: String -> LispVal -> StateTransformer LispVal
+defineLocalVar id val = 
+  ST (\s a -> let (ST f)    = eval val
                   (result, newState, newAmbient) = f s a
               in (result, newState, (insert id result newAmbient))
      )
@@ -106,91 +123,93 @@ defineLocalVar env id val =
 ---------------------------------------------------
 --LET
 --nossoLet::StateT->StateT->[LispVal]-> StateTransformer LispVal
-let' :: StateT -> [LispVal] -> LispVal -> StateTransformer LispVal
-let' st ((List ((Atom id):val:[])):[]) body = defineLocalVar st id val >> eval st body
-let' st ((List ((Atom id):val:[])):xs) body = defineLocalVar st id val >> let' st xs body
-let' st _ body = return (Error "wrong number of the goddamn arguments")
+let' :: [LispVal] -> LispVal -> StateTransformer LispVal
+let' ((List ((Atom id):val:[])):[]) body = defineLocalVar id val >> eval body
+let' ((List ((Atom id):val:[])):xs) body = defineLocalVar id val >> let' xs body
+let' _ body = return (Error "wrong number of the goddamn arguments. let")
 
 
 
 ---------------------------------------------------
 --SET!
 
-setVar :: StateT -> [LispVal] -> StateTransformer LispVal
-setVar st [(Atom id), val] = setVarAux st id val
-setVar st [(List [Atom id]) , val] = setVarAux st id val
-setVar st args = return (Error "wrong number of arguments")
+setVar :: [LispVal] -> StateTransformer LispVal
+setVar [(Atom id), val] = setVarAux id val
+setVar [(List [Atom id]) , val] = setVarAux id val
+setVar args = return (Error "wrong number of arguments. setVar")
 
-setVarAux :: StateT -> String -> LispVal -> StateTransformer LispVal
-setVarAux env id val = 
-  ST (\s a -> let (ST f)    = eval env val
+
+--Se a variável nao existir, ela é criada. TODO: Consertar isso.
+setVarAux :: String -> LispVal -> StateTransformer LispVal
+setVarAux id val = 
+  ST (\s a -> let (ST f)    = eval val
                   (result, newState, newAmbient) = f s a
               in if ( id `member` newAmbient ) then (result, newState, (insert id result newAmbient)) else (result, (insert id result newState), newAmbient )
      )
 
 ---------------------------------------------------
 --LIST-COMP
-listComp :: StateT -> [LispVal] -> [LispVal]
-listComp st ((Atom var):(List []):result:condition:[]) = []
-listComp st ((Atom var):(List (x:xs)):result:condition:[]) = if (test == (Bool True)) then (xResult:(listComp st ((Atom var):(List xs):result:condition:[]))) else (listComp st ((Atom var):(List xs):result:condition:[]))
-                                                            where (ST m) = defineLocalVar st var x >> eval st condition
+listComp :: [LispVal] -> [LispVal]
+listComp ((Atom var):(List []):result:condition:[]) = []
+listComp ((Atom var):(List (x:xs)):result:condition:[]) = if (test == (Bool True)) then (xResult:(listComp ((Atom var):(List xs):result:condition:[]))) else (listComp ((Atom var):(List xs):result:condition:[]))
+                                                            where (ST m) = defineLocalVar var x >> eval condition
                                                                   (test, newS, newA) = m Map.empty Map.empty --pegar o resultado da condição
-                                                                  (ST m2) = (ST m) >> eval st result
+                                                                  (ST m2) = (ST m) >> eval result
                                                                   (xResult, newS2, newA2) = m2 Map.empty Map.empty --pegar o resultado da operação sobre o elemento que será inserido na lista
-listComp st _ = [Error "wrong number of arguments"]
+listComp _ = [Error "wrong number of arguments. listComp"]
 
 ---------------------------------------------------
 --DO
 
-doVar :: StateT -> [LispVal] ->StateTransformer LispVal
-doVar st ((Atom var):initial:step:[]) = 
-  ST (\s a -> let (ST m) = eval st initial
+doVar :: [LispVal] ->StateTransformer LispVal
+doVar ((Atom var):initial:step:[]) = 
+  ST (\s a -> let (ST m) = eval initial
                   (resultInit, newStateI, newAmbientI) = m s a --Avaliando o valor inicial da variavel
-                  (ST m2) = eval st step
+                  (ST m2) = eval step
                   (resultStep, newStateS, newAmbientS) = m2 s a --Avaliando o valor da variável aplicando a expressão do passo (step)
               in if (var `member` a) then (resultStep, newStateS, (insert var resultStep newAmbientS)) else (resultInit, newStateS, (insert var resultInit newAmbientI))
       )
 
-doVarAux :: StateT -> LispVal -> StateTransformer LispVal
-doVarAux st (List ((List initials):[])) = doVar st initials
-doVarAux st (List ((List initials):ls)) = doVar st initials >> doVarAux st (List ls)
-doVarAux st _ = return (Error "wrong number of arguments")
+doVarAux :: LispVal -> StateTransformer LispVal
+doVarAux (List ((List initials):[])) = doVar initials
+doVarAux (List ((List initials):ls)) = doVar initials >> doVarAux (List ls)
+doVarAux _ = return (Error "wrong number of arguments. doVarAux")
 
-doExpr :: StateT -> [LispVal] -> StateTransformer LispVal
-doExpr st (expr:[]) = eval st expr
-doExpr st (expr:exps) = eval st expr >> doExpr st exps
+doExpr :: [LispVal] -> StateTransformer LispVal
+doExpr (expr:[]) = eval expr
+doExpr (expr:exps) = eval expr >> doExpr exps
 
-doFunc :: StateT -> LispVal -> StateTransformer LispVal
-doFunc st (List ((List initials):(List (condition:exps)):[])) = doVarAux st (List initials) >> 
-                                                                            ST (\s a -> let (ST m) = eval st condition
+doFunc :: LispVal -> StateTransformer LispVal
+doFunc (List ((List initials):(List (condition:exps)):[])) = doVarAux (List initials) >> 
+                                                                            ST (\s a -> let (ST m) = eval condition
                                                                                             (resultCond, newS, newA) = m s a
-                                                                                            (ST m2) = doExpr st exps
-                                                                                            (ST m3) = doFunc st (List ((List initials):(List (condition:exps)):[]))
+                                                                                            (ST m2) = doExpr exps
+                                                                                            (ST m3) = doFunc (List ((List initials):(List (condition:exps)):[]))
                                                                                         in if (resultCond == (Bool True)) then (m2 s a) else (m3 s a)
                                                                                 )
-doFunc st (List ((List initials):(List (condition:exps)):command:[])) = doVarAux st (List initials) >> 
-                                                                            ST (\s a -> let (ST m) = eval st condition
+doFunc (List ((List initials):(List (condition:exps)):command:[])) = doVarAux (List initials) >> 
+                                                                            ST (\s a -> let (ST m) = eval condition
                                                                                             (resultCond, newS, newA) = m s a
-                                                                                            (ST m2) = doExpr st exps
-                                                                                            (ST m3) = eval st command >> doFunc st (List ((List initials):(List (condition:exps)):command:[]))
+                                                                                            (ST m2) = doExpr exps
+                                                                                            (ST m3) = eval command >> doFunc (List ((List initials):(List (condition:exps)):command:[]))
                                                                                         in if (resultCond == (Bool True)) then (m2 s a) else (m3 s a)
                                                                                 )
-doFunc st _ = return (Error "wrong number of arguments")
+doFunc _ = return (Error "wrong number of arguments. doFunc")
 
 
 -- The maybe function yields a value of type b if the evaluation of 
 -- its third argument yields Nothing. In case it yields Just x, maybe
 -- applies its second argument f to x and yields (f x) as its result.
 -- maybe :: b -> (a -> b) -> Maybe a -> b
-apply :: StateT -> String -> [LispVal] -> StateTransformer LispVal
-apply st func args =  
+apply :: String -> [LispVal] -> StateTransformer LispVal
+apply func args =  
                   case (Map.lookup func state) of
                       Just (Native f)  -> return (f args)
                       Just (NativeComp f)  -> return (f args)
                       otherwise -> 
-                        (stateLookup st func >>= \res -> 
+                        (stateLookup func >>= \res -> 
                           case res of 
-                            List (Atom "lambda" : List formals : body:l) -> lambda st formals body args
+                            List (Atom "lambda" : List formals : body:l) -> lambda formals body args
                             otherwise -> return (Error "not a function.")
                         )
  
@@ -198,38 +217,36 @@ apply st func args =
 -- applying user-defined functions, instead of native ones. We use a very stupid 
 -- kind of dynamic variable (parameter) scoping that does not even support
 -- recursion. This has to be fixed in the project.
-defineLambdaVar :: StateT -> String -> LispVal -> StateTransformer LispVal
-defineLambdaVar env id val = 
-  ST (\s a -> let (ST f)    = eval env val
+defineLambdaVar :: String -> LispVal -> StateTransformer LispVal
+defineLambdaVar id val = 
+  ST (\s a -> let (ST f)    = eval val
                   (result, newState, newAmbient) = f s a
               in (result, newState, newAmbient)
      )
 
-lambdaVar :: StateT -> [LispVal] -> [LispVal] -> StateTransformer LispVal
-lambdaVar st ((Atom var):[]) (arg:[]) = defineLocalVar st var arg
-lambdaVar st ((Atom var):vars) (arg:args) = defineLocalVar st var arg >> lambdaVar st vars args
-lambdaVar st _ _ = return (Error "wrong number of arguments")
+lambdaVar :: [LispVal] -> [LispVal] -> StateTransformer LispVal
+lambdaVar ((Atom var):[]) (arg:[]) = defineLocalVar var arg
+lambdaVar ((Atom var):vars) (arg:args) = defineLocalVar var arg >> lambdaVar vars args
+lambdaVar _ _ = return (Error "wrong number of arguments lol")
 
 
-lambda :: StateT -> [LispVal] -> LispVal -> [LispVal] -> StateTransformer LispVal
+lambda :: [LispVal] -> LispVal -> [LispVal] -> StateTransformer LispVal
 {-
-lambda st formals body args = ST (\s a ->
+lambda formals body args = ST (\s a ->
   let dynEnv = Prelude.foldr (\(Atom f, a) m -> Map.insert f a m) state (zip formals args)
       (ST m) = eval dynEnv body
       (result, newState, newAmb) = m dynEnv Map.empty
   in (result, s, a)
   )
 
-lambda st formals body args = lambdaVar st formals args >> ST (\s a -> let (ST m) = eval st body
+lambda formals body args = lambdaVar formals args >> ST (\s a -> let (ST m) = eval body
                                                                            (result, newState, newAmbient) = m s a
                                                                        in (result, s, a)
                                                               )
 -}
-lambda st formals body args = ST (\ s a -> let (ST m) = lambdaVar st formals args
-                                               (resultVar, newS, newA) = m s a
-                                               (ST m2) = eval st body
-                                               (result, newS2, newA2) = m2 newS newA
-                                          in (result, s, a))
+lambda formals body args = ST (\s a -> let (ST m) = lambdaVar formals args >> eval body
+                                           (result, newS, newA) = m s a
+                                        in (result, s, a))
 
 -- Initial state of the programs. Maps identifiers to vaues. 
 -- Initially, maps function names to function values, but there's 
@@ -302,17 +319,17 @@ cdr ls = Error "invalid list."
 predNumber :: [LispVal] -> LispVal
 predNumber (Number _ : []) = Bool True
 predNumber (a:[]) = Bool False
-predNumber ls = Error "wrong number of arguments."
+predNumber ls = Error "wrong number of arguments. predNumber"
 
 predBoolean :: [LispVal] -> LispVal
 predBoolean (Bool _ : []) = Bool True
 predBoolean (a:[]) = Bool False
-predBoolean ls = Error "wrong number of arguments."
+predBoolean ls = Error "wrong number of arguments. predBoolean"
 
 predList :: [LispVal] -> LispVal
 predList (List _ : []) = Bool True
 predList (a:[]) = Bool False
-predList ls = Error "wrong number of arguments."
+predList ls = Error "wrong number of arguments. predList"
 
 numericSum :: [LispVal] -> LispVal
 numericSum [] = Number 0
@@ -323,7 +340,7 @@ numericMult [] = Number 1
 numericMult l = numericBinOp (*) l
 
 numericSub :: [LispVal] -> LispVal
-numericSub [] = Error "wrong number of arguments."
+numericSub [] = Error "wrong number of arguments. numericSub"
 numericSub [x] = if onlyNumbers [x]
                  then (\num -> (Number (- num))) (unpackNum x)
                  else Error "not a number."
@@ -355,19 +372,19 @@ unpackBool (Bool n) = n
 --DIVISÃO INTEIRA
 
 integerDiv :: [LispVal] -> LispVal
-integerDiv [] = Error "wrong number of arguments." 
-integerDiv (Number n:[]) = Error "wrong number of arguments."
+integerDiv [] = Error "wrong number of arguments. integerDiv" 
+integerDiv (Number n:[]) = Error "wrong number of arguments. integerDiv"
 integerDiv (Number n:Number m:[]) = Number (div n m)
-integerDiv (Number n:Number m:l) = Error "wrong number of arguments."
+integerDiv (Number n:Number m:l) = Error "wrong number of arguments. integerDiv"
 
 ---------------------------------------------------
 --MÓDULO
 
 numericMod :: [LispVal] -> LispVal
-numericMod [] = Error "wrong number of arguments."
-numericMod (Number n:[]) = Error "wrong number of arguments."
+numericMod [] = Error "wrong number of arguments. numericMod"
+numericMod (Number n:[]) = Error "wrong number of arguments. numericMod"
 numericMod (Number n:Number m:[]) = Number (mod n m)
-numericMod (Number n:Number m:l) = Error "wrong number of arguments."
+numericMod (Number n:Number m:l) = Error "wrong number of arguments. numericMod"
 
 -- We have not implemented division. Also, notice that we have not 
 -- addressed floating-point numbers.
@@ -399,43 +416,43 @@ instance Eq LispVal where
    (==) n m = igual n m
 
 equivalence :: [LispVal] -> LispVal
-equivalence [] = Error "wrong number of arguments."
-equivalence (n:[]) = Error "wrong number of arguments."
+equivalence [] = Error "wrong number of arguments. equivalence"
+equivalence (n:[]) = Error "wrong number of arguments. equivalence"
 equivalence (n:m:[]) = Bool (n == m)
-equivalence (n:m:l) = Error "wrong number of arguments."
+equivalence (n:m:l) = Error "wrong number of arguments. equivalence"
 
 ---------------------------------------------------
 --MENOR QUE
 
 lessThan :: [LispVal]  -> LispVal
 lessThan ((Number a):(Number b):[]) = Bool ((<) a b)
-lessThan ls = Error "wrong number of arguments."
+lessThan ls = Error "wrong number of arguments. lessThan"
 
 ---------------------------------------------------
 --MAIOR QUE
 
 biggerThan :: [LispVal]  -> LispVal
 biggerThan ((Number a):(Number b):[]) = Bool ((>) a b)
-biggerThan ls = Error "wrong number of arguments."
+biggerThan ls = Error "wrong number of arguments. biggerThan"
 
 ---------------------------------------------------
 --MENOR OU IGUAL
 
 lessOrEqual :: [LispVal]  -> LispVal
 lessOrEqual ((Number a):(Number b):[]) = Bool ((<=) a b)
-lessOrEqual ls = Error "wrong number of arguments."
+lessOrEqual ls = Error "wrong number of arguments. lessOrEqual"
 
 ---------------------------------------------------
 --MAIOR OU IGUAL
 biggerOrEqual :: [LispVal]  -> LispVal
 biggerOrEqual ((Number a):(Number b):[]) = Bool ((>=) a b)
-biggerOrEqual ls = Error "wrong number of arguments."
+biggerOrEqual ls = Error "wrong number of arguments. biggerOrEqual"
 
 ---------------------------------------------------
 --IGUAL
 equal :: [LispVal]  -> LispVal
 equal ((Number a):(Number b):[]) = Bool ((==) a b)
-equal ls = Error "wrong number of arguments."
+equal ls = Error "wrong number of arguments. Equal"
 
 ---------------------------------------------------
 --AND
@@ -458,7 +475,7 @@ orOp list = if onlyBools list
 
 notOp :: [LispVal] -> LispVal
 notOp ((Bool a):[]) = Bool (not a)
-notOp ls = Error "wrong number of arguments."
+notOp ls = Error "wrong number of arguments. NotOP"
 
 ---------------------------------------------------
 --IF THEN ELSE
@@ -466,7 +483,7 @@ notOp ls = Error "wrong number of arguments."
 ifThenElse :: [LispVal] -> LispVal
 ifThenElse ((Bool predicate):body1:body2:_) = if predicate then body1 else body2
 ifThenElse ((Bool predicate):body1:_) = if predicate then body1 else Error "Expression Unspecified"
-ifThenElse l = Error "wrong number of arguments."
+ifThenElse l = Error "wrong number of arguments. ifThenElse"
 
 ---------------------------------------------------
 --CONS
@@ -474,14 +491,14 @@ ifThenElse l = Error "wrong number of arguments."
 concatenation :: [LispVal] -> LispVal
 concatenation (element: (List l):_) = List (element:l)
 concatenation (element1:element2:_) = DottedList [element1] element2
-concatenation l = Error "wrong number of arguments."
+concatenation l = Error "wrong number of arguments. concatenation"
 
 ---------------------------------------------------
 --LENGTH
 
 lengthList :: [LispVal] -> LispVal
 lengthList ((List l):_) = Number (toInteger (length l))
-lengthList ls = Error "wrong number of arguments."
+lengthList ls = Error "wrong number of arguments. length"
 
 
 ---------------------------------------------------
@@ -502,14 +519,14 @@ cleanAux (n:ls) = (n:(cleanAux ls))
 --CONCATENACAO DE LISTA
 concList :: [LispVal] -> LispVal
 concList ((List list1):(List list2):[]) = (List (list1 ++ list2))
-concList l = Error "wrong number of arguments."
+concList l = Error "wrong number of arguments. ConcList"
 
 -----------------------------------------------------------
 --                     main FUNCTION                     --
 -----------------------------------------------------------
 
 showResult :: (LispVal, StateT, StateT) -> String
-showResult (val, defs, _) = show val ++ "\n" ++ show (toList defs)
+showResult (val, defs, local) = show val ++ "\nGlobal: " ++ show (toList defs) ++ "\nLocal: " ++ show (toList local)
 
 getResult :: StateTransformer LispVal -> (LispVal, StateT, StateT)
 getResult (ST f) = f state Map.empty
@@ -520,6 +537,6 @@ trim = Prelude.filter (\x->(not (x `elem` "\r\t\n")))
 main :: IO ()
 main = do args <- getArgs
           sourceCode <- (readFile (head args))
-          putStr $ showResult $ getResult $ eval state $ clean $ readExpr $ trim sourceCode
+          putStr $ showResult $ getResult $ eval $ clean $ readExpr $ trim sourceCode
           
 
