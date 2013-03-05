@@ -16,6 +16,7 @@ instance Show LispVal where
   show (List l) = "(" ++ showListContents l ++ ")"
   show (DottedList h t) = "(" ++ showListContents h ++ " . " ++ show t ++ ")"  
   show (Native p) = "<native procedure>"
+  show (NativeComp p) = "<native procedure>"
   show (Error s) = s
   
 -- This function could be replaced by (unwords.map show). The unwords
