@@ -40,30 +40,30 @@ import SSPrettyPrinter
 --                      INTERPRETER                      --
 -----------------------------------------------------------
 eval :: StateT -> LispVal -> StateTransformer LispVal
-eval st val@(String _) = return val
-eval st val@(Atom var) = stateLookup st var 
-eval st val@(Number _) = return val
-eval st val@(Bool _) = return val
-eval st (List [Atom "quote", val]) = return val
-eval st (List (Atom "begin":[v])) = eval st v
-eval st (List (Atom "begin": l: ls)) = eval st l >> eval st (List (Atom "begin": ls))
-eval st (List (Atom "begin":[])) = return (List [])
-eval st lam@(List (Atom "lambda":(List formals):body:[])) = return lam
+eval env val@(String _) = return val
+eval env val@(Atom var) = stateLookup env var 
+eval env val@(Number _) = return val
+eval env val@(Bool _) = return val
+eval env (List [Atom "quote", val]) = return val
+eval env (List (Atom "begin":[v])) = eval env v
+eval env (List (Atom "begin": l: ls)) = eval env l >> eval env (List (Atom "begin": ls))
+eval env (List (Atom "begin":[])) = return (List [])
+eval env lam@(List (Atom "lambda":(List formals):body:[])) = return lam
 -- The following line is slightly more complex because we are addressing the
 -- case where define is redefined by the user (whatever is the user's reason
 -- for doing so. The problem is that redefining define does not have
 -- the same semantics as redefining other functions, since define is not
 -- stored as a regular function because of its return type.
-eval st (List (Atom "define": args)) = maybe (define st args) (\v -> return v) (Map.lookup "define" state)
-eval st (List (Atom func : args)) = mapM (eval st) args >>= apply st func 
-eval st (Error s)  = return (Error s)
-eval st form = return (Error ("Could not eval the special form: " ++ (show form)))
+eval env (List (Atom "define": args)) = maybe (define env args) (\v -> return v) (Map.lookup "define" env)
+eval env (List (Atom func : args)) = mapM (eval env) args >>= apply env func 
+eval env (Error s)  = return (Error s)
+eval env form = return (Error ("Could not eval the special form: " ++ (show form)))
 
 stateLookup :: StateT -> String -> StateTransformer LispVal
-stateLookup st var = ST $ 
+stateLookup env var = ST $ 
   (\s -> 
     (maybe (Error "variable does not exist.") 
-           id (Map.lookup var (union s st) 
+           id (Map.lookup var (union s env) 
     ), s))
 
 
@@ -74,10 +74,10 @@ stateLookup st var = ST $
 -- not talking about local definitions. That's a completely different
 -- beast.
 define :: StateT -> [LispVal] -> StateTransformer LispVal
-define st [(Atom id), val] = defineVar st id val
-define st [(List [Atom id]), val] = defineVar st id val
--- define st [(List l), val]                                       
-define st args = return (Error "wrong number of arguments")
+define env [(Atom id), val] = defineVar env id val
+define env [(List [Atom id]), val] = defineVar env id val
+-- define env [(List l), val]                                       
+define env args = return (Error "wrong number of arguments")
 defineVar env id val = 
   ST (\s -> let (ST f)    = eval env val
                 (result, newState) = f s
@@ -90,13 +90,13 @@ defineVar env id val =
 -- applies its second argument f to x and yields (f x) as its result.
 -- maybe :: b -> (a -> b) -> Maybe a -> b
 apply :: StateT -> String -> [LispVal] -> StateTransformer LispVal
-apply st func args =  
-                  case (Map.lookup func state) of
+apply env func args =  
+                  case (Map.lookup func env) of
                       Just (Native f)  -> return (f args)
                       otherwise -> 
-                        (stateLookup st func >>= \res -> 
+                        (stateLookup env func >>= \res -> 
                           case res of 
-                            List (Atom "lambda" : List formals : body:l) -> lambda st formals body args                              
+                            List (Atom "lambda" : List formals : body:l) -> lambda env formals body args                              
                             otherwise -> return (Error "not a function.")
                         )
  
@@ -105,18 +105,18 @@ apply st func args =
 -- kind of dynamic variable (parameter) scoping that does not even support
 -- recursion. This has to be fixed in the project.
 lambda :: StateT -> [LispVal] -> LispVal -> [LispVal] -> StateTransformer LispVal
-lambda st formals body args = 
-  let dynEnv = Prelude.foldr (\(Atom f, a) m -> Map.insert f a m) st (zip formals args)
+lambda env formals body args = 
+  let dynEnv = Prelude.foldr (\(Atom f, a) m -> Map.insert f a m) env (zip formals args)
   in  eval dynEnv body
 
 
--- Initial state of the programs. Maps identifiers to vaues. 
+-- Initial environment of the programs. Maps identifiers to values. 
 -- Initially, maps function names to function values, but there's 
 -- nothing stopping it from storing general values (e.g., well-known
--- constants, such as pi). The initial state includes all the functions 
--- that are available for programmers.
-state :: Map String LispVal
-state =   
+-- constants, such as pi). The initial environment includes all the 
+-- functions that are available for programmers.
+environment :: Map String LispVal
+environment =   
             insert "number?"        (Native predNumber)
           $ insert "boolean?"       (Native predBoolean)
           $ insert "list?"          (Native predList)
@@ -216,12 +216,12 @@ unpackNum (Number n) = n
 -----------------------------------------------------------
 
 showResult :: (LispVal, StateT) -> String
-showResult (val, defs) = show val ++ "\n" ++ show (toList defs)
+showResult (val, defs) = show val ++ "\n" ++ show (toList defs) ++ "\n"
 
 getResult :: StateTransformer LispVal -> (LispVal, StateT)
-getResult (ST f) = f state
+getResult (ST f) = f empty -- we start with an empty state. 
 
 main :: IO ()
 main = do args <- getArgs
-          putStr $ showResult $ getResult $ eval state $ readExpr $ concat $ args
+          putStr $ showResult $ getResult $ eval environment $ readExpr $ concat $ args 
           
