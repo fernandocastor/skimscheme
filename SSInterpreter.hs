@@ -97,7 +97,7 @@ apply env func args =
                         (stateLookup env func >>= \res -> 
                           case res of 
                             List (Atom "lambda" : List formals : body:l) -> lambda env formals body args                              
-                            otherwise -> return (Error "not a function.")
+                            otherwise -> return (Error $ func ++ " not a function.")
                         )
  
 -- The lambda function is an auxiliary function responsible for
