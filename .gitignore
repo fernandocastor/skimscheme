@@ -2,3 +2,4 @@
 *.hi
 SSInterpreter
 .gitignor*
+*.exe #windows users
